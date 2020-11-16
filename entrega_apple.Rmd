@@ -1,0 +1,266 @@
+---
+title: "Entrega_Apple"
+author: "Matias Corredoira"
+date: "15/11/2020"
+output: html_document
+---
+
+
+
+## Introducción:
+
+#### En este caso nos encontramos con una base de datos en la que se marcan las distintas cofras de ingresos a lo largo de los trimestres encontrados entre el año 2008 y el año 2017. Con este modelo, se tratará de hacer una comparativa realizando 2 modelos, el ARIMA y ETS.
+
+
+
+
+
+### En primer lugar caragaremos las librerías que consideramos necesarias para la realización de la tarea.
+
+```{r, message = FALSE, warning= FALSE }
+library(readr)
+library(forecast)
+library(xts)
+library(ggplot2)
+library(ggfortify)
+```
+
+
+## Cargaremos la base de datos necesaria para la realización de la tarea.
+
+```{r }
+rawData <- read.csv("IngresosApple.csv", sep=";", dec=",")
+head(rawData)
+```
+
+#### Realizamos la transformación oportuna en la columna Trimestre para que nos lo interprete como tal y así poder trabajar mejor los datos.
+
+```{r}
+rawDate <- seq(as.Date('2008/04/01'),as.Date('2017/09/30'),by ='quarter')
+ventas_A <- rawData$Ingresos
+
+
+ventas <- xts(ventas_A,order.by=rawDate)
+ventas <- to.quarterly(ventas)
+
+```
+
+
+
+```{r, echo=FALSE}
+zVentas=as.zoo(ventas$ventas.Open)
+names(zVentas) = "Ventas"
+
+
+```
+
+
+### Graficamos las ventas.
+
+
+```{r}
+autoplot(zVentas)+ggtitle("Ventas Trimestrales en Apple")+xlab("Trimestres")+ylab("Ventas")
+```
+
+##### Se puede comprobar que en la gráfica a lo largo de los trimestres se sigue cierta tendencia al alza. A lo largo de los trimestres la media y la varianza va cambiando por ello dictaminamos que no se da estacionalidad. Vemos también que la varianza cada vez aumenta en mayor medida mientras que la tendencia en apariencia semeja constante. Por todo esto concluimos que el modelo posee varianza multiplicativa y una tendencia multiplicativa suavizada.
+
+
+
+
+
+
+
+
+### Graficamos las ventas de forma más precisa para que se pueddan distinguir bien los puntos donde se marcan los ingreso de los trimestre.
+
+```{r}
+df_new <- data.frame(value = as.vector(zVentas),
+                     time = time(zVentas))
+ggplot(df_new)+geom_point(aes(x=time,y=value))+geom_line(aes(x=time,y=value))+ylab("Ventas")+ggtitle("Ventas Trimestrales Apple")+xlab("Trimestres")
+```
+
+
+## Marcamos la separación de los años y realiazamos la gráfica por trimestres
+
+```{r,  warning=FALSE}
+tsVentas=ts(coredata(zVentas), start = c(2008, 1), frequency = 4)               
+
+ggfreqplot(tsVentas,freq=4,nrow=1,facet.labeller=c("1T","2T","3T","4T"))+ggtitle("Ventas Trimestrales")
+```
+
+##### Se puede comprobar como de forma clara los ingresos se concentran en el cuarto trimestre mientras que en los otros 3 los ingresos están bastante más equilibrados aunque en el primero las ventas sean ligeramente mayores. Esto podría ser indicativo de la existencia de estacionaridad.
+
+
+
+
+
+## Series temporales: Componentes
+
+```{r}
+stl(tsVentas[,1], s.window = "periodic")
+
+plot(stl(tsVentas[,1], s.window = "periodic"))
+```
+
+##### En la siguiente gráfica sacamos muchos datos como las ventas anteriormente mostradas, la estacionaridad se marca de forma clara. Además también vemos como la tendencia al alza es clara, pero con el paso de los años se va viendo menos marcada.
+
+
+
+## Modelo ETS
+
+### Para hacer las pruebas con este modelo en primer lugar eliminamos los primeros 3 trimestres ya que son los que más tarde utilizaremos en el test.
+
+```{r}
+cOmit=3                      # Sececcionamos el número sw trimestres
+
+nObs=length(zVentas)         # Marcamos el tamaño
+
+oVentas <- window(zVentas,start=index(zVentas[1]),end=index(zVentas[nObs-cOmit]))
+
+
+```
+
+
+
+
+## A continuación lo realizamos del caso que nos ocupa, los modelos no estacionales.
+
+### Para ello realizaremos la selección automática.
+
+```{r}
+etsfit<-ets(oVentas)
+
+fventas.ets=forecast(etsfit)           # Pronosticamos.
+
+summary(fventas.ets)                   # Solicitamos los datos.
+```
+### Realizamos la graficación
+
+```{r}
+plot(fventas.ets)
+lines(window(zVentas),type="o")
+
+```
+
+
+
+
+##### La comprobación de la predicción la dejaremos para mas tarde para realizarla en conjunto con el modelo ARIMA para así comprar resultados.
+
+
+
+
+
+## Modelo ARIMA
+
+### En primer lugar realizaremos una transformaremos a logaritmo.
+
+```{r}
+zlVentas=log(zVentas)
+df_newl <- data.frame(value = as.vector(zlVentas),
+                     time = time(zlVentas))
+ggplot(df_newl)+geom_point(aes(x=time,y=value))+geom_line(aes(x=time,y=value))+ylab("Ventas")+ggtitle("Ventas Trimestrales con LOG Apple")+xlab("Trimestres")
+```
+##### Podemos comprobar el claro cambio de escala y como las oscilaciones que se dan no son tan grandes.
+
+```{r}
+olVentas <- window(zlVentas,start=index(zlVentas[1]),end=index(zlVentas[nObs-cOmit]))
+```
+
+
+
+```{r}
+fit1=auto.arima(olVentas,lambda=0)
+summary(fit1)
+```
+
+### Graficamos los residuos .
+
+```{r}
+ggtsdisplay(fit1$residuals)
+```
+
+
+
+#### Realizaremos un Box-Ljung Test para la comprobación de la existencia de autocorrelación dentro de esta serie.
+
+```{r}
+
+Box.test(fit1$residuals,lag=4, fitdf=3, type="Lj")
+```
+
+##### Observando el valor de p-value concluimos que se la autocorrelación en esta serie es distinta de 0 y que por lo tanto se da su existencia. 
+
+
+
+
+
+### A continuación realizamos la graficación del modelo de prediccón ARIMA.
+
+```{r}
+fventas.arima=forecast(fit1)
+
+ggplot(df_newl)+geom_point(aes(x=time,y=value))+geom_line(aes(x=time,y=value))+ geom_forecast(fventas.arima,alpha=0.4)+ggtitle("ARIMA: Predicción Apple")
+```
+
+
+#### Comprobamos como dan los valores.
+
+```{r}
+fventas.arima
+```
+
+
+#### Comprobación de diferencias entre los valores pronosticados y los valores reales en ambos modelos.
+
+#### Diferencias en modelo ETS.
+
+```{r}
+matrix(c(fventas.ets$mean[1:cOmit],zVentas[(nObs-cOmit+1):nObs]),ncol=2)
+
+```
+
+#### Diferencias en modelo ARIMA
+
+```{r}
+matrix(c(fventas.arima$mean[1:cOmit],zVentas[(nObs-cOmit+1):nObs]),ncol=2)
+```
+
+##### Se puede apreciar de forma clara como la diferencia ente los valores pronosticados y los valores reales es mucho mayor en el modelo ARIMA si lo comparamos con el modelo ETS. Esta diferencia se podrá marcar de forma numérica a acontinuación.
+
+
+
+
+
+## Comprobación de los pronósticos de los modelos
+
+
+#### Pronóstico en modelo ETS
+
+
+```{r}
+etsfit<-ets(window(tsVentas,end=2016+3/4))
+fventas.ets=forecast(etsfit,h=cOmit)
+forecast:::testaccuracy(fventas.ets$mean,window(tsVentas,start=2017),test = NULL, d = NULL, D = NULL)
+
+```
+#### Pronóstico en modelo ARIMA
+
+```{r}
+
+forecast:::testaccuracy(fventas.arima$mean,window(tsVentas,start=2017),test = NULL, d = NULL, D = NULL)
+```
+
+##### Finalmente viendo estos datos podemos concluir que es mejor modelo predictivo el ETS en este caso. En primer lugar, el error cuadrático que posee está muy por debajo del que produce el modelo ARIMA, además de que podemos comprobar de nuevo con MAPE, que indica el error de pronóstico también vuelve a ser más grande en el modelo ARIMA. Además el coeficiente de incertidumbre en el caso del modelo ARIMA es más del triple del que poseee el modelo ETS.
+
+
+
+
+
+
+
+
+
+
+
+
